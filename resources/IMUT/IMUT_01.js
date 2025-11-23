@@ -36,8 +36,11 @@ async function getTimeSlotsArray(url) {
         if (!response.ok) {
             throw new Error(`HTTP错误! 状态码: ${response.status}`);
         }
-        
-        const htmlText = await response.text();
+
+        const buffer = await response.arrayBuffer();
+        const decoder = new TextDecoder('gbk');
+
+        const htmlText = decoder.decode(buffer);
         
         // 解析时段信息
         const timeSlots = parseTimeSlotsFromHTML(htmlText);
@@ -146,8 +149,10 @@ async function convertToTargetFormat(url) {
         if (!response.ok) {
             throw new Error(`HTTP错误! 状态码: ${response.status}`);
         }
-        
-        const htmlText = await response.text();
+        const buffer = await response.arrayBuffer();
+        const decoder = new TextDecoder('gbk');
+
+        const htmlText = decoder.decode(buffer);
         const parser = new DOMParser();
         const doc = parser.parseFromString(htmlText, 'text/html');
         
@@ -210,6 +215,7 @@ async function convertToTargetFormat(url) {
 }
 
 // ============Debug==============
+
 
 
 
@@ -295,7 +301,9 @@ async function getSemesterInfo() {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
         
-        const htmlText = await response.text();
+        const buffer = await response.arrayBuffer();
+        const decoder = new TextDecoder('gbk');
+        const htmlText = decoder.decode(buffer);
         
         // 使用 DOMParser 解析 HTML
         const parser = new DOMParser();
@@ -336,7 +344,9 @@ async function getMaxWeekValue(yearid, termid) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
         
-        const htmlText = await response.text();
+        const buffer = await response.arrayBuffer();
+        const decoder = new TextDecoder('gbk');
+        const htmlText = decoder.decode(buffer);
         
         // 创建DOM解析器
         const parser = new DOMParser();
@@ -388,7 +398,9 @@ async function getFirstCourseDate(yearid, termid) {
             throw new Error('网络响应不正常');
         }
 
-        const htmlText = await response.text();
+        const buffer = await response.arrayBuffer();
+        const decoder = new TextDecoder('gbk');
+        const htmlText = decoder.decode(buffer);
         
         // 创建临时DOM元素来解析HTML
         const parser = new DOMParser();
@@ -412,14 +424,30 @@ async function getFirstCourseDate(yearid, termid) {
     }
 }
 
+function fixEncoding() {
+    // 强制设置页面编码
+    document.documentElement.lang = 'zh-CN';
+    document.documentElement.charset = 'gbk';
+    
+    // 更新meta标签
+    let meta = document.querySelector('meta[charset]');
+    if (meta) {
+        meta.setAttribute('charset', 'gbk');
+    } else {
+        meta = document.createElement('meta');
+        meta.setAttribute('charset', 'gbk');
+        document.head.prepend(meta);
+    }
+}
+
 // ====================== 导入课程主流程 ======================
 async function runImportFlow() {
 
-    if (!isUserLoggedIn()) {
-        AndroidBridge.showToast("请先登录教务系统！");
-        window.location.href = "http://jw.imut.edu.cn/academic/login/imut/loginIds6Valid.jsp";
-        return;
-    }
+    // if (!isUserLoggedIn()) {
+    //     AndroidBridge.showToast("请先登录教务系统！");
+    //     window.location.href = "http://jw.imut.edu.cn/academic/login/imut/loginIds6Valid.jsp";
+    //     return;
+    // }
 
     AndroidBridge.showToast("即将开始导入课表，请稍候...");
 
@@ -517,4 +545,120 @@ async function runImportFlow() {
 
 }
 
-runImportFlow();
+async function runImportFlow2() {
+
+    // if (!isUserLoggedIn()) {
+    //     console.log("请先登录教务系统！");
+    //     window.location.href = "http://jw.imut.edu.cn/academic/login/imut/loginIds6Valid.jsp";
+    //     return;
+    // }
+
+    fixEncoding();
+
+    console.log("即将开始导入课表，请稍候...");
+
+    // 获取学年学期信息
+    const semesterInfo = await getSemesterInfo();
+    if (!semesterInfo) {
+        console.log("获取学生信息失败，请重试！");
+        return;
+    }
+    currentYear = semesterInfo.year; // 当前年份 - 1980
+    currentTerm = semesterInfo.term; // 当前学期
+
+    console.log("学年学期信息:", semesterInfo);
+
+    // 构造课程表URL
+    // http://jw.imut.edu.cn/academic/manager/coursearrange/showTimetable.do?id=826170&yearid=45&termid=3
+    const timetableUrl = `http://jw.imut.edu.cn/academic/manager/coursearrange/showTimetable.do?id=${semesterInfo.studentid}&yearid=${semesterInfo.year}&termid=${semesterInfo.term}&timetableType=STUDENT&sectionType=BASE`;
+
+    console.log("课程表URL:", timetableUrl);
+
+    // 获取时段数据
+    const timeSlots = await getTimeSlotsArray(timetableUrl);
+    if (!timeSlots || timeSlots.length === 0) {
+        console.log("获取时间段信息失败，使用默认时间段！");
+    }
+
+    // 获取并转换课程表数据
+    const courses = await convertToTargetFormat(timetableUrl);
+    if (courses.length === 0) {
+        console.log("获取课程表数据失败，请重试！");
+        return;
+    }
+
+    // 获取最大周数
+    const maxWeek = 20; // 默认最大周数
+    try {
+        maxWeek = await getMaxWeekValue(semesterInfo.year, semesterInfo.term);
+    } catch (err) {
+        console.warn("获取最大周数失败，使用默认值 20");
+    }
+
+    // 将数据传递给Android端
+
+    // 提交课程数据
+    try {
+        console.log("提交课程数据:", JSON.stringify(courses));
+        const coursesCount = courses.length;
+        console.log(`课程导入成功，共导入 ${coursesCount} 门课程！`);
+    } catch (err) {
+        console.error("课程导入失败:", err);
+        console.log("课程导入失败：" + err.message);
+        return;
+    }
+
+    // 获取第一个课程日期
+    let firstCourseDate = null;
+    try {
+        firstCourseDate = await getFirstCourseDate(semesterInfo.year, semesterInfo.term);
+    } catch (err) {
+        console.warn("获取第一个课程日期失败:", err);
+    }
+
+    // 获取最大周数
+    let maxWeeks = 20; // 默认最大周数
+    try {
+        maxWeeks = await getMaxWeekValue(semesterInfo.year, semesterInfo.term);
+    } catch (err) {
+        console.warn("获取最大周数失败，使用默认值 20");
+    }
+
+    // 配置课表配置
+    const coursesConfig = {
+        semesterStartDate: firstCourseDate,
+        semesterTotalWeeks: maxWeeks,
+    };
+
+    try {
+        console.log("提交课表配置:", JSON.stringify(coursesConfig));
+        console.log("课表配置保存成功！");
+    } catch (err) {
+        console.error("课表配置保存失败:", err);
+        console.log("课表配置保存失败：" + err.message);
+        return;
+    }
+
+    // 提交时间段数据
+    try {
+        console.log("提交时间段数据:", JSON.stringify(timeSlots));
+        console.log("时间段导入成功！");
+    } catch (err) {
+        console.error("时间段导入失败:", err);
+        console.log("时间段导入失败：" + err.message);
+        return;
+    }
+
+    // 通知任务完成
+    console.log("整个导入流程执行完毕并成功。");
+
+    // 在控制台输出完整结果
+    console.log("=== 完整导入结果 ===");
+    console.log("学年学期信息:", semesterInfo);
+    console.log("时间段数据:", timeSlots);
+    console.log("课程数据:", courses);
+    console.log("课表配置:", coursesConfig);
+    
+}
+
+runImportFlow2();
