@@ -19,6 +19,49 @@ const defaultTimeSlots = [
     { "number": 12, "startTime": "20:30", "endTime": "21:20" }
 ];
 
+/**
+ * 从HTML文本中解析时段信息
+ * @param {string} htmlText - HTML文本
+ * @returns {Object} 时段信息对象
+ */
+function parseTimeSlotsFromHTML(htmlText) {
+    console.log("解析时段信息的HTML:", htmlText);
+
+    const timeSlots = {};
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(htmlText, 'text/html');
+    
+    const timetable = doc.querySelector('table#timetable');
+    if (timetable) {
+        const rows = timetable.querySelectorAll('tr');
+        
+        for (let i = 1; i < rows.length; i++) { // 跳过表头行
+            const th = rows[i].querySelector('th');
+            if (th) {
+                const sectionText = th.textContent.trim();
+                
+                // 解析格式如："第1节\n08:20\n┆\n09:05"
+                const sectionMatch = sectionText.match(/第(\d+)节/);
+                const timeMatch = sectionText.match(/(\d{2}:\d{2})/g);
+                
+                if (sectionMatch && timeMatch && timeMatch.length >= 2) {
+                    const section = parseInt(sectionMatch[1]);
+                    timeSlots[section] = {
+                        section: section,
+                        startTime: timeMatch[0],
+                        endTime: timeMatch[1]
+                    };
+                }
+            }
+        }
+    }
+    
+    if (Object.keys(timeSlots).length === 0) {
+        throw new Error('未找到时段信息表格');
+    }
+    
+    return timeSlots;
+}
 
 /**
  * 从指定网页地址异步获取HTML并解析时段信息，如果解析失败则返回默认时段
@@ -50,6 +93,7 @@ async function getTimeSlotsArray(url) {
         
         if (hasValidData) {
             console.log('成功解析时段信息');
+            console.log(timeSlots);
             // 转换为目标格式
             return Object.values(timeSlots).map(slot => ({
                 number: slot.section,
@@ -216,17 +260,6 @@ async function convertToTargetFormat(url) {
 
 // ============Debug==============
 
-
-
-
-// // ========将结果传递给Android端=========
-// AndroidBridge.receiveTimetableData(
-//     JSON.stringify(courseInfo),
-//     JSON.stringify(convertedTimetable),
-//     JSON.stringify(getTimeSlotsArray())
-// );
-
-
 function isUserLoggedIn() {
     const currentUrl = window.location.href;
 
@@ -244,46 +277,6 @@ function isUserLoggedIn() {
     }
     return false;
 }
-
-/*
-    * 从标题解析学年学期信息
-    * @returns {Object} 包含 schoolYears 和 schoolTerms 的对象
-    * schoolYears: 学年，例如 2025
-    * schoolTerms: 学期，1=春季，2=夏季，3=秋季
-    */
-// function getSemesterInfo() {
-//     const titleText = document.querySelector('#title').innerText;
-//     console.log('标题文本:', titleText);
-    
-//     // 匹配格式：2025 秋 学生课表: XXXXX
-//     const match = titleText.match(/(\d{4})\s*([春秋])/);
-    
-//     if (match) {
-//         const year = match[1]; // "2025"
-//         const term = match[2]; // "秋"
-        
-//         // 将中文学期转换为数字
-//         const termMap = {
-//             '春': 1,
-//             '夏': 2,
-//             '秋': 3
-//         };
-
-//         const schoolYear = parseInt(year) - 1980;
-        
-//         return {
-//             schoolYears: parseInt(year),
-//             schoolTerms: termMap[term] || 3 // 默认秋季学期
-//         };
-//     } else {
-//         console.warn('无法解析学年学期信息，使用默认值');
-//         return {
-//             schoolYears: 2025 - 1980,
-//             schoolTerms: 3 // 秋季学期
-//         };
-//     }
-// }
-
 
 /*
     * 异步获取学年学期信息
@@ -336,7 +329,7 @@ async function getSemesterInfo() {
 async function getMaxWeekValue(yearid, termid) {
     try {
         const response = await fetch(`http://jw.imut.edu.cn/academic/manager/coursearrange/studentWeeklyTimetable.do?yearid=${yearid}&termid=${termid}`, {
-            method: 'GET',
+            method: 'POST',
             credentials: 'include'
         });
         
@@ -347,7 +340,7 @@ async function getMaxWeekValue(yearid, termid) {
         const buffer = await response.arrayBuffer();
         const decoder = new TextDecoder('gbk');
         const htmlText = decoder.decode(buffer);
-        
+
         // 创建DOM解析器
         const parser = new DOMParser();
         const doc = parser.parseFromString(htmlText, 'text/html');
@@ -358,19 +351,18 @@ async function getMaxWeekValue(yearid, termid) {
         if (!weekSelect) {
             throw new Error('未找到周次选择框');
         }
-        
+
         // 获取所有option的value并转换为数字
         const weekOptions = Array.from(weekSelect.querySelectorAll('option'));
         const weekValues = weekOptions
             .map(option => parseInt(option.value))
             .filter(value => !isNaN(value) && value !== 0); // 过滤掉非数字和空值
-        
+
         if (weekValues.length === 0) {
             throw new Error('未找到有效的周数值');
         }
-        
-        // 返回最大值
         const maxWeek = Math.max(...weekValues);
+
         return maxWeek;
         
     } catch (error) {
@@ -424,22 +416,6 @@ async function getFirstCourseDate(yearid, termid) {
     }
 }
 
-function fixEncoding() {
-    // 强制设置页面编码
-    document.documentElement.lang = 'zh-CN';
-    document.documentElement.charset = 'gbk';
-    
-    // 更新meta标签
-    let meta = document.querySelector('meta[charset]');
-    if (meta) {
-        meta.setAttribute('charset', 'gbk');
-    } else {
-        meta = document.createElement('meta');
-        meta.setAttribute('charset', 'gbk');
-        document.head.prepend(meta);
-    }
-}
-
 // ====================== 导入课程主流程 ======================
 async function runImportFlow() {
 
@@ -461,8 +437,7 @@ async function runImportFlow() {
     currentTerm = semesterInfo.term; // 当前学期
 
     // 构造课程表URL
-    // http://jw.imut.edu.cn/academic/manager/coursearrange/showTimetable.do?id=826170&yearid=45&termid=3
-    const timetableUrl = `http://jw.imut.edu.cn/academic/manager/coursearrange/showTimetable.do?id=${semesterInfo.studentid}&yearid=${semesterInfo.year}&term=${semesterInfo.term}&timetableType=STUDENT&sectionType=BASE`;
+    const timetableUrl = `http://jw.imut.edu.cn/academic/manager/coursearrange/showTimetable.do?id=${semesterInfo.studentid}&yearid=${semesterInfo.year}&termid=${semesterInfo.term}&timetableType=STUDENT&sectionType=BASE`;
 
     // 获取时段数据
     const timeSlots = await getTimeSlotsArray(timetableUrl);
@@ -521,7 +496,7 @@ async function runImportFlow() {
     };
 
     try {
-        await window.AndroidBridgePromise.saveCoursesConfig(JSON.stringify(coursesConfig));
+        await window.AndroidBridgePromise.saveCourseConfig(JSON.stringify(coursesConfig));
         AndroidBridge.showToast("课表配置保存成功！");
     } catch (err) {
         console.error("课表配置保存失败:", err);
