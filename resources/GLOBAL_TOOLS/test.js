@@ -19,49 +19,6 @@ const defaultTimeSlots = [
     { "number": 12, "startTime": "20:30", "endTime": "21:20" }
 ];
 
-/**
- * 从HTML文本中解析时段信息
- * @param {string} htmlText - HTML文本
- * @returns {Object} 时段信息对象
- */
-function parseTimeSlotsFromHTML(htmlText) {
-    console.log("解析时段信息的HTML:", htmlText);
-
-    const timeSlots = {};
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(htmlText, 'text/html');
-    
-    const timetable = doc.querySelector('table#timetable');
-    if (timetable) {
-        const rows = timetable.querySelectorAll('tr');
-        
-        for (let i = 1; i < rows.length; i++) { // 跳过表头行
-            const th = rows[i].querySelector('th');
-            if (th) {
-                const sectionText = th.textContent.trim();
-                
-                // 解析格式如："第1节\n08:20\n┆\n09:05"
-                const sectionMatch = sectionText.match(/第(\d+)节/);
-                const timeMatch = sectionText.match(/(\d{2}:\d{2})/g);
-                
-                if (sectionMatch && timeMatch && timeMatch.length >= 2) {
-                    const section = parseInt(sectionMatch[1]);
-                    timeSlots[section] = {
-                        section: section,
-                        startTime: timeMatch[0],
-                        endTime: timeMatch[1]
-                    };
-                }
-            }
-        }
-    }
-    
-    if (Object.keys(timeSlots).length === 0) {
-        throw new Error('未找到时段信息表格');
-    }
-    
-    return timeSlots;
-}
 
 /**
  * 从指定网页地址异步获取HTML并解析时段信息，如果解析失败则返回默认时段
@@ -93,7 +50,6 @@ async function getTimeSlotsArray(url) {
         
         if (hasValidData) {
             console.log('成功解析时段信息');
-            console.log(timeSlots);
             // 转换为目标格式
             return Object.values(timeSlots).map(slot => ({
                 number: slot.section,
@@ -260,6 +216,17 @@ async function convertToTargetFormat(url) {
 
 // ============Debug==============
 
+
+
+
+// // ========将结果传递给Android端=========
+// AndroidBridge.receiveTimetableData(
+//     JSON.stringify(courseInfo),
+//     JSON.stringify(convertedTimetable),
+//     JSON.stringify(getTimeSlotsArray())
+// );
+
+
 function isUserLoggedIn() {
     const currentUrl = window.location.href;
 
@@ -277,6 +244,46 @@ function isUserLoggedIn() {
     }
     return false;
 }
+
+/*
+    * 从标题解析学年学期信息
+    * @returns {Object} 包含 schoolYears 和 schoolTerms 的对象
+    * schoolYears: 学年，例如 2025
+    * schoolTerms: 学期，1=春季，2=夏季，3=秋季
+    */
+// function getSemesterInfo() {
+//     const titleText = document.querySelector('#title').innerText;
+//     console.log('标题文本:', titleText);
+    
+//     // 匹配格式：2025 秋 学生课表: XXXXX
+//     const match = titleText.match(/(\d{4})\s*([春秋])/);
+    
+//     if (match) {
+//         const year = match[1]; // "2025"
+//         const term = match[2]; // "秋"
+        
+//         // 将中文学期转换为数字
+//         const termMap = {
+//             '春': 1,
+//             '夏': 2,
+//             '秋': 3
+//         };
+
+//         const schoolYear = parseInt(year) - 1980;
+        
+//         return {
+//             schoolYears: parseInt(year),
+//             schoolTerms: termMap[term] || 3 // 默认秋季学期
+//         };
+//     } else {
+//         console.warn('无法解析学年学期信息，使用默认值');
+//         return {
+//             schoolYears: 2025 - 1980,
+//             schoolTerms: 3 // 秋季学期
+//         };
+//     }
+// }
+
 
 /*
     * 异步获取学年学期信息
@@ -329,7 +336,7 @@ async function getSemesterInfo() {
 async function getMaxWeekValue(yearid, termid) {
     try {
         const response = await fetch(`http://jw.imut.edu.cn/academic/manager/coursearrange/studentWeeklyTimetable.do?yearid=${yearid}&termid=${termid}`, {
-            method: 'POST',
+            method: 'GET',
             credentials: 'include'
         });
         
@@ -340,7 +347,7 @@ async function getMaxWeekValue(yearid, termid) {
         const buffer = await response.arrayBuffer();
         const decoder = new TextDecoder('gbk');
         const htmlText = decoder.decode(buffer);
-
+        
         // 创建DOM解析器
         const parser = new DOMParser();
         const doc = parser.parseFromString(htmlText, 'text/html');
@@ -351,18 +358,19 @@ async function getMaxWeekValue(yearid, termid) {
         if (!weekSelect) {
             throw new Error('未找到周次选择框');
         }
-
+        
         // 获取所有option的value并转换为数字
         const weekOptions = Array.from(weekSelect.querySelectorAll('option'));
         const weekValues = weekOptions
             .map(option => parseInt(option.value))
             .filter(value => !isNaN(value) && value !== 0); // 过滤掉非数字和空值
-
+        
         if (weekValues.length === 0) {
             throw new Error('未找到有效的周数值');
         }
+        
+        // 返回最大值
         const maxWeek = Math.max(...weekValues);
-
         return maxWeek;
         
     } catch (error) {
@@ -416,6 +424,22 @@ async function getFirstCourseDate(yearid, termid) {
     }
 }
 
+function fixEncoding() {
+    // 强制设置页面编码
+    document.documentElement.lang = 'zh-CN';
+    document.documentElement.charset = 'gbk';
+    
+    // 更新meta标签
+    let meta = document.querySelector('meta[charset]');
+    if (meta) {
+        meta.setAttribute('charset', 'gbk');
+    } else {
+        meta = document.createElement('meta');
+        meta.setAttribute('charset', 'gbk');
+        document.head.prepend(meta);
+    }
+}
+
 // ====================== 导入课程主流程 ======================
 async function runImportFlow() {
 
@@ -437,6 +461,7 @@ async function runImportFlow() {
     currentTerm = semesterInfo.term; // 当前学期
 
     // 构造课程表URL
+    // http://jw.imut.edu.cn/academic/manager/coursearrange/showTimetable.do?id=826170&yearid=45&termid=3
     const timetableUrl = `http://jw.imut.edu.cn/academic/manager/coursearrange/showTimetable.do?id=${semesterInfo.studentid}&yearid=${semesterInfo.year}&term=${semesterInfo.term}&timetableType=STUDENT&sectionType=BASE`;
 
     // 获取时段数据
@@ -520,112 +545,4 @@ async function runImportFlow() {
 
 }
 
-async function runImportFlow2() {
-
-    // if (!isUserLoggedIn()) {
-    //     console.log("请先登录教务系统！");
-    //     window.location.href = "http://jw.imut.edu.cn/academic/login/imut/loginIds6Valid.jsp";
-    //     return;
-    // }
-
-    fixEncoding();
-
-    console.log("即将开始导入课表，请稍候...");
-
-    // 获取学年学期信息
-    const semesterInfo = await getSemesterInfo();
-    if (!semesterInfo) {
-        console.log("获取学生信息失败，请重试！");
-        return;
-    }
-    currentYear = semesterInfo.year; // 当前年份 - 1980
-    currentTerm = semesterInfo.term; // 当前学期
-
-    console.log("学年学期信息:", semesterInfo);
-
-    // 构造课程表URL
-    // http://jw.imut.edu.cn/academic/manager/coursearrange/showTimetable.do?id=826170&yearid=45&termid=3
-    const timetableUrl = `http://jw.imut.edu.cn/academic/manager/coursearrange/showTimetable.do?id=${semesterInfo.studentid}&yearid=${semesterInfo.year}&termid=${semesterInfo.term}&timetableType=STUDENT&sectionType=BASE`;
-
-    console.log("课程表URL:", timetableUrl);
-
-    // 获取时段数据
-    const timeSlots = await getTimeSlotsArray(timetableUrl);
-    if (!timeSlots || timeSlots.length === 0) {
-        console.log("获取时间段信息失败，使用默认时间段！");
-    }
-
-    // 获取并转换课程表数据
-    const courses = await convertToTargetFormat(timetableUrl);
-    if (courses.length === 0) {
-        console.log("获取课程表数据失败，请重试！");
-        return;
-    }
-
-    // 获取最大周数
-    let maxWeek = 20; // 默认最大周数
-    try {
-        maxWeek = await getMaxWeekValue(semesterInfo.year, semesterInfo.term);
-    } catch (err) {
-        console.log(err);
-        console.warn("获取最大周数失败，使用默认值 20");
-    }
-
-    // 获取第一个课程日期
-    let firstCourseDate = null;
-    try {
-        firstCourseDate = await getFirstCourseDate(semesterInfo.year, semesterInfo.term);
-    } catch (err) {
-        console.warn("获取第一个课程日期失败:", err);
-    }
-    // 将数据传递给Android端
-
-    // 提交课程数据
-    try {
-        console.log("提交课程数据:", JSON.stringify(courses));
-        const coursesCount = courses.length;
-        console.log(`课程导入成功，共导入 ${coursesCount} 门课程！`);
-    } catch (err) {
-        console.error("课程导入失败:", err);
-        console.log("课程导入失败：" + err.message);
-        return;
-    }
-
-    // 配置课表配置
-    const coursesConfig = {
-        semesterStartDate: firstCourseDate,
-        semesterTotalWeeks: maxWeek,
-    };
-
-    try {
-        console.log("提交课表配置:", JSON.stringify(coursesConfig));
-        console.log("课表配置保存成功！");
-    } catch (err) {
-        console.error("课表配置保存失败:", err);
-        console.log("课表配置保存失败：" + err.message);
-        return;
-    }
-
-    // 提交时间段数据
-    try {
-        console.log("提交时间段数据:", JSON.stringify(timeSlots));
-        console.log("时间段导入成功！");
-    } catch (err) {
-        console.error("时间段导入失败:", err);
-        console.log("时间段导入失败：" + err.message);
-        return;
-    }
-
-    // 通知任务完成
-    console.log("整个导入流程执行完毕并成功。");
-
-    // 在控制台输出完整结果
-    console.log("=== 完整导入结果 ===");
-    console.log("学年学期信息:", semesterInfo);
-    console.log("时间段数据:", timeSlots);
-    console.log("课程数据:", courses);
-    console.log("课表配置:", coursesConfig);
-    
-}
-
-runImportFlow2();
+runImportFlow();
