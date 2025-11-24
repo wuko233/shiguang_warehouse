@@ -75,5 +75,5 @@ schools:
   
   - id: "IMUT"
     name: "内蒙古工业大学"
-    initial: "I"
+    initial: "N"
     resource_folder: "IMUT"
