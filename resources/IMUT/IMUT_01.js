@@ -346,16 +346,21 @@ async function convertToTargetFormat(url) {
 
 /**
  * 合并连续的课程信息。
+ * 合并条件：同一天、同一课程名称、同一位置、同一教师、同一周次且时间连续
  *
- * @param {Array<Object>} courses - 课程信息数组.
- * @returns {Array<Object>} 返回合并后的课程信息数组，每个课程对象包含相同的字段。
+ * @param {Array<Object>} courses - 课程信息数组
+ * @returns {Array<Object>} 返回合并后的课程信息数组
  */
 function mergeContinuousCourses(courses) {
-    // 按天、课程名称、位置进行分组
+    // 按所有关键属性进行分组
     const grouped = {};
+
+    console.log("合并前课程数量:", courses.length);
     
     courses.forEach(course => {
-        const key = `${course.day}-${course.name}-${course.position}`;
+        // 使用周次数组的字符串表示作为分组键的一部分
+        const weeksKey = JSON.stringify(course.weeks.sort((a, b) => a - b));
+        const key = `${course.day}-${course.name}-${course.position}-${course.teacher || '未知'}-${weeksKey}`;
         if (!grouped[key]) {
             grouped[key] = [];
         }
@@ -374,23 +379,29 @@ function mergeContinuousCourses(courses) {
         group.forEach(course => {
             if (!currentCourse) {
                 // 第一个课程
+                console.log(`开始新课程: ${course.name} 教师:${course.teacher} 节次 ${course.startSection}-${course.endSection} 周次 ${JSON.stringify(course.weeks)}`);
                 currentCourse = { ...course };
             } else if (currentCourse.endSection + 1 === course.startSection) {
                 // 时间连续，合并
+                console.log(`合并课程: ${currentCourse.name} 节次 ${currentCourse.startSection}-${currentCourse.endSection} 与 节次 ${course.startSection}-${course.endSection}`);
                 currentCourse.endSection = course.endSection;
             } else {
                 // 时间不连续，将当前课程加入结果，开始新的课程
+                console.log(`结束课程: ${currentCourse.name} 节次 ${currentCourse.startSection}-${currentCourse.endSection}`);
                 result.push(currentCourse);
+                console.log(`开始新课程: ${course.name} 教师:${course.teacher} 节次 ${course.startSection}-${course.endSection} 周次 ${JSON.stringify(course.weeks)}`);
                 currentCourse = { ...course };
             }
         });
         
         // 将最后一个课程加入结果
         if (currentCourse) {
+            console.log(`结束课程: ${currentCourse.name} 节次 ${currentCourse.startSection}-${currentCourse.endSection}`);
             result.push(currentCourse);
         }
     });
     
+    console.log("合并后课程数量:", result.length);
     return result;
 }
 
