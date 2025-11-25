@@ -1,3 +1,6 @@
+// 内蒙古工业大学教务系统课程导入脚本
+// 根据教务处网站内容解析课程表数据
+// 2025.11.25
 
 // ============生成时间段配置==============
 
@@ -341,25 +344,7 @@ async function convertToTargetFormat(url) {
     }
 }
 
-// ============Debug==============
-
-function isUserLoggedIn() {
-    const currentUrl = window.location.href;
-
-    if (currentUrl.startsWith("http://jw.imut.edu.cn/academic/manager/coursearrange/showTimetable.do")) {
-
-        if (document.body.innerText.includes("Sorry, Page Not Found")) {
-            return false;
-        }
-
-        if (document.title.includes("学生课表")) {
-            return true;
-        }
-
-        return false;
-    }
-    return false;
-}
+// ============配置获取==============
 
 /*
     * 异步获取学年学期信息
@@ -408,7 +393,7 @@ async function getSemesterInfo() {
     }
 }
 
-// 异步获取最大周数的方法
+// 异步获取最大周数
 async function getMaxWeekValue(yearid, termid) {
     try {
         const response = await fetch(`http://jw.imut.edu.cn/academic/manager/coursearrange/studentWeeklyTimetable.do?yearid=${yearid}&termid=${termid}`, {
@@ -499,14 +484,32 @@ async function getFirstCourseDate(yearid, termid) {
     }
 }
 
-// ====================== 导入课程主流程 ======================
-async function runImportFlow() {
+// ====================== 辅助函数 ======================
 
-    // if (!isUserLoggedIn()) {
-    //     AndroidBridge.showToast("请先登录教务系统！");
-    //     window.location.href = "http://jw.imut.edu.cn/academic/login/imut/loginIds6Valid.jsp";
-    //     return;
-    // }
+// 日期格式验证函数
+function validateDateFormat(dateString) {
+    const regex = /^\d{4}-\d{2}-\d{2}$/;
+    if (regex.test(dateString)) {
+        return false;
+    } else {
+        return "请输入正确的日期格式，示例：2025-09-01";
+    }
+}
+
+// 弹出日期确认对话框
+async function setStartDate(suggestedDate) {
+    const dateSelection = await window.AndroidBridgePromise.showPrompt(
+        "请确认学期起始日期",
+        `此日期来自您本学期第一节课日期，如有误，请修改（格式：YYYY-MM-DD）：`,
+        suggestedDate || "",
+        "validateDateFormat"
+    );
+    return dateSelection;
+}
+
+// ====================== 导入课程主流程 ======================
+
+async function runImportFlow() {
 
     AndroidBridge.showToast("即将开始导入课表，请稍候...");
 
@@ -535,27 +538,20 @@ async function runImportFlow() {
         return;
     }
 
-
-
-    // 将数据传递给Android端
-
-    // 提交课程数据
-    try {
-        await window.AndroidBridgePromise.saveImportedCourses(JSON.stringify(courses));
-        const coursesCount = courses.length;
-        AndroidBridge.showToast(`课程导入成功，共导入 ${coursesCount} 门课程！`);
-    } catch (err) {
-        console.error("课程导入失败:", err);
-        AndroidBridge.showToast("课程导入失败：" + err.message);
-        return;
-    }
-
     // 获取第一个课程日期
     let firstCourseDate = null;
     try {
         firstCourseDate = await getFirstCourseDate(semesterInfo.year, semesterInfo.term);
     } catch (err) {
         console.warn("获取第一个课程日期失败:", err);
+    }
+
+    // 用户确认起始日期
+    try {
+        firstCourseDate = await setStartDate(firstCourseDate);
+    } catch (err) {
+        console.error("用户取消了日期输入:", err);
+        AndroidBridge.showToast("未输入起始日期。");
     }
 
     // 获取最大周数
@@ -572,12 +568,16 @@ async function runImportFlow() {
         semesterTotalWeeks: maxWeeks,
     };
 
+    // 将数据传递给Android端
+
+    // 提交课程数据
     try {
-        await window.AndroidBridgePromise.saveCourseConfig(JSON.stringify(coursesConfig));
-        AndroidBridge.showToast("课表配置保存成功！");
+        await window.AndroidBridgePromise.saveImportedCourses(JSON.stringify(courses));
+        const coursesCount = courses.length;
+        AndroidBridge.showToast(`课程导入成功，共导入 ${coursesCount} 门课程！`);
     } catch (err) {
-        console.error("课表配置保存失败:", err);
-        AndroidBridge.showToast("课表配置保存失败：" + err.message);
+        console.error("课程导入失败:", err);
+        AndroidBridge.showToast("课程导入失败：" + err.message);
         return;
     }
 
@@ -588,6 +588,16 @@ async function runImportFlow() {
     } catch (err) {
         console.error("时间段导入失败:", err);
         AndroidBridge.showToast("时间段导入失败：" + err.message);
+        return;
+    }
+
+    // 提交课表配置
+    try {
+        await window.AndroidBridgePromise.saveCourseConfig(JSON.stringify(coursesConfig));
+        AndroidBridge.showToast("课表配置保存成功！");
+    } catch (err) {
+        console.error("课表配置保存失败:", err);
+        AndroidBridge.showToast("课表配置保存失败：" + err.message);
         return;
     }
 
