@@ -93,8 +93,6 @@ async function getTimeSlotsArray(url) {
                             timeSlots[1] && timeSlots[1].startTime;
         
         if (hasValidData) {
-            console.log('成功解析时段信息');
-            console.log(timeSlots);
             // 转换为目标格式
             return Object.values(timeSlots).map(slot => ({
                 number: slot.section,
@@ -105,7 +103,7 @@ async function getTimeSlotsArray(url) {
             throw new Error('解析到的时段数据不完整');
         }
     } catch (error) {
-        console.log('从HTML解析时段信息失败，使用默认时段:', error.message);
+        console.error('从HTML解析时段信息失败，使用默认时段:', error.message);
         // 使用默认时段
         return defaultTimeSlots;
     }
@@ -354,8 +352,6 @@ async function convertToTargetFormat(url) {
 function mergeContinuousCourses(courses) {
     // 按所有关键属性进行分组
     const grouped = {};
-
-    console.log("合并前课程数量:", courses.length);
     
     courses.forEach(course => {
         // 使用周次数组的字符串表示作为分组键的一部分
@@ -379,29 +375,23 @@ function mergeContinuousCourses(courses) {
         group.forEach(course => {
             if (!currentCourse) {
                 // 第一个课程
-                console.log(`开始新课程: ${course.name} 教师:${course.teacher} 节次 ${course.startSection}-${course.endSection} 周次 ${JSON.stringify(course.weeks)}`);
                 currentCourse = { ...course };
             } else if (currentCourse.endSection + 1 === course.startSection) {
                 // 时间连续，合并
-                console.log(`合并课程: ${currentCourse.name} 节次 ${currentCourse.startSection}-${currentCourse.endSection} 与 节次 ${course.startSection}-${course.endSection}`);
                 currentCourse.endSection = course.endSection;
             } else {
                 // 时间不连续，将当前课程加入结果，开始新的课程
-                console.log(`结束课程: ${currentCourse.name} 节次 ${currentCourse.startSection}-${currentCourse.endSection}`);
                 result.push(currentCourse);
-                console.log(`开始新课程: ${course.name} 教师:${course.teacher} 节次 ${course.startSection}-${course.endSection} 周次 ${JSON.stringify(course.weeks)}`);
                 currentCourse = { ...course };
             }
         });
         
         // 将最后一个课程加入结果
         if (currentCourse) {
-            console.log(`结束课程: ${currentCourse.name} 节次 ${currentCourse.startSection}-${currentCourse.endSection}`);
             result.push(currentCourse);
         }
     });
     
-    console.log("合并后课程数量:", result.length);
     return result;
 }
 
@@ -537,10 +527,8 @@ async function getFirstCourseDate(yearid, termid) {
         
         if (firstDateTd) {
             const firstCourseDate = firstDateTd.textContent.trim();
-            console.log('第一个课程日期:', firstCourseDate);
             return firstCourseDate;
         } else {
-            console.log('未找到课程日期');
             return null;
         }
         
@@ -638,8 +626,6 @@ async function runImportFlow() {
     };
 
     // 将数据传递给Android端
-
-    console.log(courses);
 
     // 提交课程数据
     try {
