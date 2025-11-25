@@ -344,11 +344,61 @@ async function convertToTargetFormat(url) {
     }
 }
 
+/**
+ * 合并连续的课程信息。
+ *
+ * @param {Array<Object>} courses - 课程信息数组.
+ * @returns {Array<Object>} 返回合并后的课程信息数组，每个课程对象包含相同的字段。
+ */
+function mergeContinuousCourses(courses) {
+    // 按天、课程名称、位置进行分组
+    const grouped = {};
+    
+    courses.forEach(course => {
+        const key = `${course.day}-${course.name}-${course.position}`;
+        if (!grouped[key]) {
+            grouped[key] = [];
+        }
+        grouped[key].push(course);
+    });
+    
+    const result = [];
+    
+    // 处理每个分组
+    Object.values(grouped).forEach(group => {
+        // 按开始节次排序
+        group.sort((a, b) => a.startSection - b.startSection);
+        
+        let currentCourse = null;
+        
+        group.forEach(course => {
+            if (!currentCourse) {
+                // 第一个课程
+                currentCourse = { ...course };
+            } else if (currentCourse.endSection + 1 === course.startSection) {
+                // 时间连续，合并
+                currentCourse.endSection = course.endSection;
+            } else {
+                // 时间不连续，将当前课程加入结果，开始新的课程
+                result.push(currentCourse);
+                currentCourse = { ...course };
+            }
+        });
+        
+        // 将最后一个课程加入结果
+        if (currentCourse) {
+            result.push(currentCourse);
+        }
+    });
+    
+    return result;
+}
+
 // ============配置获取==============
 
 /*
     * 异步获取学年学期信息
-    * @returns {Promise<Object>} 包含 studentid, year, term, windowStyle 的对象
+    * @returns {Promise<Object>} 包含 studentid, year, term的对象
     * studentid: 标识ID
     * year: 学年，例如 45 (2025-1980)
     * term: 学期，1=春季，2=夏季，3=秋季
@@ -382,7 +432,6 @@ async function getSemesterInfo() {
             studentid: ctrtElement.getAttribute('studentid'),
             year: ctrtElement.getAttribute('year'),
             term: ctrtElement.getAttribute('term'),
-            windowStyle: ctrtElement.getAttribute('windowStyle')
         };
         
         return params;
@@ -393,7 +442,13 @@ async function getSemesterInfo() {
     }
 }
 
-// 异步获取最大周数
+/**
+ * 获取指定学年和学期的最大周数值。
+ *
+ * @param {string} yearid - 学年的ID，例如 "2023"。
+ * @param {string} termid - 学期的ID，例如 "1" 或 "2"。
+ * @returns {Promise<number>} 返回一个Promise，解析为最大周数值。
+ */
 async function getMaxWeekValue(yearid, termid) {
     try {
         const response = await fetch(`http://jw.imut.edu.cn/academic/manager/coursearrange/studentWeeklyTimetable.do?yearid=${yearid}&termid=${termid}`, {
@@ -532,11 +587,14 @@ async function runImportFlow() {
     }
 
     // 获取并转换课程表数据
-    const courses = await convertToTargetFormat(timetableUrl);
+    let courses = await convertToTargetFormat(timetableUrl);
     if (courses.length === 0) {
         AndroidBridge.showToast("获取课程表数据失败，请重试！");
         return;
     }
+
+    // 合并连续课程
+    courses = mergeContinuousCourses(courses)
 
     // 获取第一个课程日期
     let firstCourseDate = null;
@@ -569,6 +627,8 @@ async function runImportFlow() {
     };
 
     // 将数据传递给Android端
+
+    console.log(courses);
 
     // 提交课程数据
     try {
