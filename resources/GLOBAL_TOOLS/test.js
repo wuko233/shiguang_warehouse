@@ -25,8 +25,6 @@ const defaultTimeSlots = [
  * @returns {Object} 时段信息对象
  */
 function parseTimeSlotsFromHTML(htmlText) {
-    console.log("解析时段信息的HTML:", htmlText);
-
     const timeSlots = {};
     const parser = new DOMParser();
     const doc = parser.parseFromString(htmlText, 'text/html');
@@ -174,6 +172,108 @@ function parseCourseName(courseText) {
     return name.trim();
 }
 
+function parseSingleCourse(lines, day, timeSlot) {
+    
+    const courseNameMatch = lines[0].match(/<<(.*?)>>/);
+
+    if (!courseNameMatch) {
+        return null;
+    }
+
+    let courseData = {
+        name: parseCourseName(courseNameMatch[1]),
+        position: lines[1] || '',
+        day: day,
+        startSection: timeSlot,
+        endSection: timeSlot,
+        weeks: []
+    };
+
+    // 单门课程示例
+    // ['<<离散数学导论>>;1', '教C', '贾老师', '1-15周', '讲课']
+    // 无教师名课程示例：
+    // ['<<体育选项课(一)>>;11', '操   场', '2-18周', '讲课']
+
+    if (lines.length > 4) {
+        // 有教师名课程
+        courseData.teacher = lines[2].replace(/,$/, '');
+        courseData.weeks = parseWeeks(lines[3]);
+    } else {
+        // 无教师名课程
+        courseData.teacher = '';
+        courseData.weeks = parseWeeks(lines[2]);
+    }
+
+    return courseData;
+}
+
+
+/**
+ * 解析包含多个课程的课程信息块。
+ *
+ * @param {Array<string>} lines - 包含课程信息的字符串数组，每个元素表示一行数据。
+ * @param {string} day - 表示课程所在的星期几。
+ * @param {string} timeSlot - 表示课程所在的时间段。
+ * @returns {Array<Object>} 返回一个包含课程信息的数组，每个课程信息是一个对象。
+ */
+function parseMultipleCourses(lines, day, timeSlot) {
+    const courses = [];
+    let currentCourseLines = [];
+
+    // 示例：
+    // ['<<工程训练C>>;11', '格物楼D', '刘老师', '1-10周', '讲课', '<<数据结构与算法>>;1', '教C', '秦老师', '11-18周', '讲课']
+
+    for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes('<<') && currentCourseLines.length > 0) {
+            const courseData = parseSingleCourse(currentCourseLines, day, timeSlot);
+            if (courseData) {
+                courses.push(courseData);
+            }
+            currentCourseLines = [];
+        }
+        currentCourseLines.push(lines[i]);
+    }
+
+    if (currentCourseLines.length > 0) {
+
+        const courseData = parseSingleCourse(currentCourseLines, day, timeSlot);
+        if (courseData) {
+            courses.push(courseData);
+        }
+    }
+
+    return courses;
+}
+
+/**
+ * 处理课程区块信息，解析出课程的详细信息。
+ *
+ * @param {string} block - 包含课程信息的HTML字符串，使用`<br>`分隔每行。
+ * @param {string} day - 表示课程所在的星期几。
+ * @param {string} timeSlot - 表示课程所在的时间段。
+ * @returns {Array<Object>} 返回一个包含课程信息的数组，每个课程信息是一个对象。
+ */
+function processCourseBlock(block, day, timeSlot) {
+    const lines = block.split('<br>').map(line => 
+        line.replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim()
+    ).filter(line => line);
+
+    const courses = [];
+
+    const courseCount = lines.filter(line => line.includes('<<')).length;
+
+    if (courseCount > 1) {
+        courses.push(...parseMultipleCourses(lines, day, timeSlot));
+    } else if (lines.length >= 4) {
+        const courseData = parseSingleCourse(lines, day, timeSlot);
+        if (courseData) {
+            courses.push(courseData);
+        }
+    }
+
+    return courses;
+}
+
 /**
  * 将HTML课程表转换为标准格式的课程数据
  * @param {string} url - 网页地址
@@ -214,46 +314,29 @@ async function convertToTargetFormat(url) {
                 const content = cell.innerHTML.trim();
                 
                 if (content && content !== '&nbsp;') {
+
                     // 分割每个课程块（一个单元格可能有多个课程）
                     const courseBlocks = content.split(/<br>\s*<br>/);
                     
                     courseBlocks.forEach(block => {
                         if (block.trim()) {
-                            const lines = block.split('<br>').map(line => 
-                                line.replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim()
-                            ).filter(line => line);
-                            
-                            if (lines.length >= 5) {
-                                const courseData = {
-                                    name: parseCourseName(lines[0]),
-                                    teacher: lines[2].replace(/,$/, ''), // 去除可能的逗号
-                                    position: lines[1],
-                                    day: day, // 1=周一, 7=周日
-                                    startSection: timeSlot,
-                                    endSection: timeSlot, // 默认单节课
-                                    weeks: parseWeeks(lines[3])
-                                };
-                                
-                                // 处理连续多节课的情况（如1-2节）
-                                const timeMatch = row.querySelector('th').textContent.match(/第(\d+)节/);
-                                if (timeMatch) {
-                                    const sectionNum = parseInt(timeMatch[1]);
-                                    courseData.startSection = sectionNum;
-                                    courseData.endSection = sectionNum;
-                                }
-                                
-                                timetable.push(courseData);
+
+                            const courses = processCourseBlock(block, day, timeSlot);
+
+                            for (const course of courses) {
+                                timetable.push(course);
+
                             }
                         }
                     });
                 }
             }
         }
-        
+
         return timetable;
         
     } catch (error) {
-        console.error('转换课程表数据时出错:', error);
+
         return []; // 返回空数组作为错误回退
     }
 }
@@ -452,13 +535,7 @@ async function runImportFlow() {
         return;
     }
 
-    // 获取最大周数
-    let maxWeek = 20; // 默认最大周数
-    try {
-        maxWeek = await getMaxWeekValue(semesterInfo.year, semesterInfo.term);
-    } catch (err) {
-        console.warn("获取最大周数失败，使用默认值 20");
-    }
+
 
     // 将数据传递给Android端
 
