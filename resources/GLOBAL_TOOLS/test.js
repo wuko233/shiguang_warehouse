@@ -453,7 +453,7 @@ async function runImportFlow() {
     }
 
     // 获取最大周数
-    const maxWeek = 20; // 默认最大周数
+    let maxWeek = 20; // 默认最大周数
     try {
         maxWeek = await getMaxWeekValue(semesterInfo.year, semesterInfo.term);
     } catch (err) {
